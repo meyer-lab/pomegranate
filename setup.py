@@ -64,13 +64,14 @@ class build_ext(_build_ext):
     def finalize_options(self):
         _build_ext.finalize_options(self)
         # Prevent numpy from thinking it is still in its setup process:
-        __builtins__.__NUMPY_SETUP__ = False
+        if hasattr(__builtins__, '__NUMPY_SETUP__'):
+            __builtins__.__NUMPY_SETUP__ = False
         import numpy
         self.include_dirs.append(numpy.get_include())
 
 setup(
     name='pomegranate',
-    version='0.13.5',
+    version='0.14.1',
     author='Jacob Schreiber',
     author_email='jmschreiber91@gmail.com',
     packages=[

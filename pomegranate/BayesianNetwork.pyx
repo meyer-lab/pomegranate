@@ -232,8 +232,23 @@ cdef class BayesianNetwork(GraphModel):
 		free(self.parent_idxs)
 
 	def plot(self, filename=None):
-		"""Draw this model's graph using pygraphviz.
+		"""Draw this model's graph using pygraphviz and matplotlib.
+		
+		If no filename, it uses pygraphviz to write a temporary png file,
+		and matplotlib to `imshow()` it. If using jupyter or IPython, enable
+		`%matplotlib inline` and this will immediately display your graph.
+		Otherwise, per usual matplotlib convention, you have to issue a 
+		`plt.show()` or `matplotlib.pyplot.show()` to open a window with the 
+		image.
+		    
+		TODO: Use svg or pdf for original image. Jupyter and IPython can render SVG
+		directly, e.g. `from IPython.display import SVG` and `SVG(filename=...)`. 
 
+		Parameters
+		----------
+		filename : str, optional
+			Filename for saving the .pdf graph. Default is None
+			
 		Returns
 		-------
 		None
@@ -692,7 +707,7 @@ cdef class BayesianNetwork(GraphModel):
 			data_generator = X
 
 		with Parallel(n_jobs=n_jobs, backend='threading') as parallel:
-			f = delayed(self.summarize, check_pickle=False)
+			f = delayed(self.summarize)
 			parallel(f(*batch) for batch in data_generator.batches())
 
 		self.from_summaries(inertia, pseudocount)
@@ -905,8 +920,8 @@ cdef class BayesianNetwork(GraphModel):
 		n_step = burnin+n
 		n_state = len(self.states)
 
-		cdef numpy.ndarray[numpy.double_t, ndim=1,mode='c'] current_state = numpy.empty([n_state],dtype=numpy.float)
-		cdef numpy.ndarray[numpy.double_t, ndim=2,mode='c'] all_states = numpy.empty([n*len(evidences),n_state],dtype=numpy.float)
+		cdef numpy.ndarray[numpy.double_t, ndim=1,mode='c'] current_state = numpy.empty([n_state],dtype=numpy.float64)
+		cdef numpy.ndarray[numpy.double_t, ndim=2,mode='c'] all_states = numpy.empty([n*len(evidences),n_state],dtype=numpy.float64)
 		cdef numpy.ndarray[numpy.double_t,ndim=1,mode='c'] prob, prob_tmp, state_subset, proba
 
 		cdef double [:] current_state_view = current_state
@@ -1135,15 +1150,14 @@ cdef class BayesianNetwork(GraphModel):
 		indices = {state.distribution: i for i, state in enumerate(self.states)}
 
 		n, d = len(X), len(X[0])
-		cdef numpy.ndarray X_int = numpy.empty((n, d), dtype='float64')
-		cdef double* X_int_ptr = <double*> X_int.data
+		cdef double* X_int = <double*> malloc(n * d * sizeof(double))
 
 		for i in range(n):
 			for j in range(d):
 				if _check_nan(X[i][j]):
-					X_int[i, j] = nan
+					X_int[i * d + j] = nan
 				else:
-					X_int[i, j] = self.keymap[j][X[i][j]]
+					X_int[i * d + j] = self.keymap[j][X[i][j]]
 
 		if weights is None:
 			weights_ndarray = numpy.ones(n, dtype='float64')
@@ -1157,11 +1171,12 @@ cdef class BayesianNetwork(GraphModel):
 		for i, state in enumerate(self.states):
 			if isinstance(state.distribution, ConditionalProbabilityTable):
 				with nogil:
-					(<Model> self.distributions_ptr[i])._summarize(X_int_ptr, weights_ptr, n,
-						0, 1)
+					(<Model> self.distributions_ptr[i])._summarize(X_int, weights_ptr, n, 0, 1)
 
 			else:
 				state.distribution.summarize([x[i] for x in X], weights)
+
+		free(X_int)
 
 	def from_summaries(self, inertia=0.0, pseudocount=0.0):
 		"""Use MLE on the stored sufficient statistics to train the model.
@@ -1597,9 +1612,7 @@ cdef class ParentGraph(object):
 	"""
 
 	cdef int i, n, d, max_parents
-	cdef tuple parent_set
 	cdef double pseudocount
-	cdef public double all_parents_score
 	cdef dict values
 	cdef numpy.ndarray X
 	cdef numpy.ndarray weights
@@ -2037,7 +2050,8 @@ def discrete_greedy(X, weights, key_count, include_edges, exclude_edges,
 
 		structure[best_variable] = best_parents
 		seen_variables = tuple(sorted(seen_variables + (best_variable,)))
-		unseen_variables = unseen_variables - set([best_variable])
+		unseen_variables.remove(best_variable)
+		parent_graphs[best_variable] = None #free memory
 
 	return tuple(structure)
 
