@@ -49,13 +49,6 @@ cimport numpy
 from joblib import Parallel
 from joblib import delayed
 
-try:
-    import pygraphviz
-    import matplotlib.pyplot as plt
-    import matplotlib.image
-except ImportError:
-    pygraphviz = None
-
 # Define some useful constants
 DEF NEGINF = float("-inf")
 DEF INF = float("inf")
@@ -626,6 +619,12 @@ cdef class HiddenMarkovModel(GraphModel):
         None
         """
 
+        try:
+            import pygraphviz
+            import matplotlib.pyplot as plt
+            import matplotlib.image
+        except ImportError:
+            pygraphviz = None
 
         if pygraphviz is not None:
             G = pygraphviz.AGraph(directed=True)
@@ -701,6 +700,8 @@ cdef class HiddenMarkovModel(GraphModel):
         -------
         None
         """
+
+        cdef int i
 
         self.free_bake_buffers()
 
@@ -2505,8 +2506,8 @@ cdef class HiddenMarkovModel(GraphModel):
 
         Returns
         -------
-        improvement : double
-            The total improvement in fitting the model to the data
+        improvement : HiddenMarkovModel
+            The trained model itself.
         """
 
         if self.d == 0:

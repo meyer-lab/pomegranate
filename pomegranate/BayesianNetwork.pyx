@@ -47,27 +47,13 @@ from .io import DataGenerator
 #from libcpp.list cimport list as cpplist
 from libc.math cimport exp as cexp
 
-import cython
 cimport cython
-import numpy
-cimport numpy
-import random
-
 
 from collections import defaultdict
-
-try:
-	import tempfile
-	import pygraphviz
-	import matplotlib.pyplot as plt
-	import matplotlib.image
-except ImportError:
-	pygraphviz = None
 
 DEF INF = float("inf")
 DEF NEGINF = float("-inf")
 
-nan = numpy.nan
 nan = numpy.nan
 
 def _check_input(X, model):
@@ -253,6 +239,14 @@ cdef class BayesianNetwork(GraphModel):
 		-------
 		None
 		"""
+
+		try:
+			import tempfile
+			import pygraphviz
+			import matplotlib.pyplot as plt
+			import matplotlib.image
+		except ImportError:
+			pygraphviz = None
 
 		if pygraphviz is not None:
 			G = pygraphviz.AGraph(directed=True)
@@ -1336,7 +1330,7 @@ cdef class BayesianNetwork(GraphModel):
 	def from_samples(cls, X, weights=None, algorithm='greedy', max_parents=-1,
 		 penalty=None, root=0, constraint_graph=None, include_edges=None, 
 		 exclude_edges=None, pseudocount=0.0, state_names=None, name=None, 
-		 reduce_dataset=True, keys=None, n_jobs=1):
+		 reduce_dataset=True, keys=None, low_memory=None, n_jobs=1):
 		"""Learn the structure of the network from data.
 
 		There are currently two types of approaches implemented. The first,
@@ -1435,10 +1429,21 @@ cdef class BayesianNetwork(GraphModel):
 			algorithms, including when using a constraint graph. Default is
 			True.
 
-		keys : list
+		keys : list, optional
 			A list of sets where each set is the keys present in that column.
 			If there are d columns in the data set then this list should have
-			d sets and each set should have at least two keys in it.
+			d sets and each set should have at least two keys in it. Default
+			is None.
+
+		low_memory : bool or None, optional
+			Whether to use a low-memory version of the search algorithm. This
+			option only affects algorithm="greedy" and algorithm="exact". 
+			Although the low-memory version of both the greedy and exact
+			algorithms will use less memory, it will also significantly slow
+			down the exact algorithm. However, setting this to True will also
+			significantly speed up the greedy algorithm. Setting this value to
+			None will enable it when algorithm="greedy" and disable it otherwise.
+			Default is None.
 
 		n_jobs : int, optional
 			The number of threads to use when learning the structure of the
@@ -1466,6 +1471,9 @@ cdef class BayesianNetwork(GraphModel):
 			if len(include_edges) > 0:
 				raise ValueError("Cannot use both a constraint graph and " /
 					"forced edge inclusions.")
+
+		if low_memory is None:
+			low_memory = algorithm == 'greedy'
 
 		if isinstance(X, BaseGenerator):
 			batches = [batch for batch in X.batches()]
@@ -1529,19 +1537,22 @@ cdef class BayesianNetwork(GraphModel):
 				key_count=key_count, include_edges=include_edges,
 				exclude_edges=exclude_edges, pseudocount=pseudocount,
 				penalty=penalty, max_parents=max_parents,
-				constraint_graph=constraint_graph, n_jobs=n_jobs)
+				constraint_graph=constraint_graph, low_memory=low_memory, 
+				n_jobs=n_jobs)
 
 		elif algorithm == 'exact':
 			structure = discrete_exact_a_star(X=X_int, weights=weights,
 				key_count=key_count, include_edges=include_edges,
 				exclude_edges=exclude_edges, pseudocount=pseudocount,
-				penalty=penalty, max_parents=max_parents, n_jobs=n_jobs)
+				penalty=penalty, max_parents=max_parents, 
+				low_memory=low_memory, n_jobs=n_jobs)
 
 		elif algorithm == 'greedy':
 			structure = discrete_greedy(X=X_int, weights=weights,
 				key_count=key_count, include_edges=include_edges,
 				exclude_edges=exclude_edges, pseudocount=pseudocount,
-				penalty=penalty, max_parents=max_parents, n_jobs=n_jobs)
+				penalty=penalty, max_parents=max_parents, 
+				low_memory=low_memory, n_jobs=n_jobs)
 
 		elif algorithm == 'exact-dp':
 			structure = discrete_exact_dp(X=X_int, weights=weights,
@@ -1599,11 +1610,15 @@ cdef class ParentGraph(object):
 		using the k-learn procedure. Can drastically speed up algorithms.
 		If -1, no max on parents. Default is -1.
 
-	parent_set : tuple, default ()
-		The variables which are possible parents for this variable. If nothing
-		is passed in then it defaults to all other variables, as one would
-		expect in the naive case. This allows for cases where we want to build
-		a parent graph over only a subset of the variables.
+	low_memory : bool or None, optional
+		Whether to use a low-memory version of the search algorithm. This
+		option only affects algorithm="greedy" and algorithm="exact". 
+		Although the low-memory version of both the greedy and exact
+		algorithms will use less memory, it will also significantly slow
+		down the exact algorithm. However, setting this to True will also
+		significantly speed up the greedy algorithm. Setting this value to
+		None will enable it when algorithm="greedy" and disable it otherwise.
+		Default is None.
 
 	Returns
 	-------
@@ -1622,9 +1637,11 @@ cdef class ParentGraph(object):
 	cdef int* m
 	cdef int* parents
 	cdef double penalty
+	cdef bint low_memory
 
 	def __init__(self, X, weights, key_count, i, include_edges=[],
-		exclude_edges=[], pseudocount=0.0, penalty=-1, max_parents=-1):
+		exclude_edges=[], pseudocount=0.0, penalty=-1, max_parents=-1,
+		low_memory=False):
 		self.X = X
 		self.weights = weights
 		self.key_count = key_count
@@ -1641,6 +1658,7 @@ cdef class ParentGraph(object):
 		self.m = <int*> malloc((self.d+2)*sizeof(int))
 		self.parents = <int*> malloc(self.d*sizeof(int))
 		self.penalty = penalty
+		self.low_memory = low_memory
 
 	def __len__(self):
 		return len(self.values)
@@ -1680,7 +1698,8 @@ cdef class ParentGraph(object):
 			return self.values[value]
 
 		best_parents, best_score = (), NEGINF
-		if len(value) <= max(self.max_parents, len(self.include_parents)):
+		max_parents= max(self.max_parents,len(self.include_parents))
+		if len(value) <= max_parents:
 			for parent in value:
 				if parent in self.exclude_parents:
 					break
@@ -1692,13 +1711,24 @@ cdef class ParentGraph(object):
 					best_parents, best_score = value, self.calculate_value(
 						value)
 
-		for i in range(len(value)):
-			parent_subset = value[:i] + value[i+1:]
-			parents, score = self[parent_subset]
+		if self.low_memory:
+			if len(value) > 0:
+				max_parents = min(max_parents, len(value) - 1)
+				for parent_subset in it.combinations(value, max_parents):
+					parents, score = self[parent_subset]
 
-			if score > best_score:
-				best_score = score
-				best_parents = parents
+					if score > best_score:
+						best_score = score
+						best_parents = parents
+		else:
+			for i in range(len(value)):
+				parent_subset = value[:i] + value[i+1:]
+				parents, score = self[parent_subset]
+
+				if score > best_score:
+					best_score = score
+					best_parents = parents
+
 
 		self.values[value] = (best_parents, best_score)
 		return self.values[value]
@@ -1870,7 +1900,7 @@ def discrete_exact_dp(X, weights, key_count, include_edges, exclude_edges,
 
 
 def discrete_exact_a_star(X, weights, key_count, include_edges, exclude_edges,
-	pseudocount, penalty, max_parents, n_jobs):
+	pseudocount, penalty, max_parents, low_memory, n_jobs):
 	"""
 	Find the optimal graph over a set of variables with no other knowledge.
 
@@ -1917,6 +1947,16 @@ def discrete_exact_a_star(X, weights, key_count, include_edges, exclude_edges,
 		using the k-learn procedure. Can drastically speed up algorithms.
 		If -1, no max on parents. Default is -1.
 
+	low_memory : bool or None, optional
+		Whether to use a low-memory version of the search algorithm. This
+		option only affects algorithm="greedy" and algorithm="exact". 
+		Although the low-memory version of both the greedy and exact
+		algorithms will use less memory, it will also significantly slow
+		down the exact algorithm. However, setting this to True will also
+		significantly speed up the greedy algorithm. Setting this value to
+		None will enable it when algorithm="greedy" and disable it otherwise.
+		Default is None.
+
 	n_jobs : int
 		The number of threads to use when learning the structure of the
 		network. This parallelizes the creation of the parent graphs.
@@ -1932,7 +1972,7 @@ def discrete_exact_a_star(X, weights, key_count, include_edges, exclude_edges,
 	parent_graphs = [ParentGraph(X=X, weights=weights, key_count=key_count,
 		include_edges=include_edges, exclude_edges=exclude_edges, i=i,
 		pseudocount=pseudocount, penalty=penalty,
-		max_parents=max_parents) for i in range(d)]
+		max_parents=max_parents, low_memory=low_memory) for i in range(d)]
 
 	other_variables = {}
 	for i in range(d):
@@ -1978,7 +2018,7 @@ def discrete_exact_a_star(X, weights, key_count, include_edges, exclude_edges,
 
 
 def discrete_greedy(X, weights, key_count, include_edges, exclude_edges,
-	pseudocount, penalty, max_parents, n_jobs):
+	pseudocount, penalty, max_parents, low_memory, n_jobs):
 	"""Find the optimal graph over a set of variables with no other knowledge.
 
 	Parameters
@@ -2015,6 +2055,16 @@ def discrete_greedy(X, weights, key_count, include_edges, exclude_edges,
 		using the k-learn procedure. Can drastically speed up algorithms.
 		If -1, no max on parents. Default is -1.
 
+	low_memory : bool or None, optional
+		Whether to use a low-memory version of the search algorithm. This
+		option only affects algorithm="greedy" and algorithm="exact". 
+		Although the low-memory version of both the greedy and exact
+		algorithms will use less memory, it will also significantly slow
+		down the exact algorithm. However, setting this to True will also
+		significantly speed up the greedy algorithm. Setting this value to
+		None will enable it when algorithm="greedy" and disable it otherwise.
+		Default is None.
+
 	n_jobs : int
 		The number of threads to use when learning the structure of the
 		network. This parallelizes the creation of the parent graphs.
@@ -2031,7 +2081,7 @@ def discrete_greedy(X, weights, key_count, include_edges, exclude_edges,
 	parent_graphs = [ParentGraph(X=X, weights=weights, key_count=key_count,
 		include_edges=include_edges, exclude_edges=exclude_edges, i=i,
 		pseudocount=pseudocount, penalty=penalty,
-		max_parents=max_parents) for i in range(d)]
+		max_parents=max_parents, low_memory=low_memory) for i in range(d)]
 
 	structure, seen_variables, unseen_variables = [() for i in range(d)], (), set(range(d))
 
@@ -2056,7 +2106,8 @@ def discrete_greedy(X, weights, key_count, include_edges, exclude_edges,
 	return tuple(structure)
 
 def discrete_exact_with_constraints(X, weights, key_count, include_edges,
-	exclude_edges, pseudocount, penalty, max_parents, constraint_graph, n_jobs):
+	exclude_edges, pseudocount, penalty, max_parents, constraint_graph, 
+	low_memory, n_jobs):
 	"""This returns the optimal Bayesian network given a set of constraints.
 
 	This function controls the process of learning the Bayesian network by
@@ -2105,6 +2156,16 @@ def discrete_exact_with_constraints(X, weights, key_count, include_edges,
 		task is just all variables in a single node with a self edge,
 		meaning that you know nothing about
 
+	low_memory : bool or None, optional
+		Whether to use a low-memory version of the search algorithm. This
+		option only affects algorithm="greedy" and algorithm="exact". 
+		Although the low-memory version of both the greedy and exact
+		algorithms will use less memory, it will also significantly slow
+		down the exact algorithm. However, setting this to True will also
+		significantly speed up the greedy algorithm. Setting this value to
+		None will enable it when algorithm="greedy" and disable it otherwise.
+		Default is None.
+
 	n_jobs : int
 		The number of threads to use when learning the structure of the
 		network. This parallelized both the creation of the parent
@@ -2149,7 +2210,7 @@ def discrete_exact_with_constraints(X, weights, key_count, include_edges,
 	with Parallel(n_jobs=n_jobs, backend='threading') as parallel:
 		local_structures = parallel(delayed(discrete_exact_with_constraints_task)(
 			X, weights, key_count, include_edges, exclude_edges, pseudocount,
-			penalty, max_parents, task, n_jobs) for task in tasks)
+			penalty, max_parents, task, low_memory, n_jobs) for task in tasks)
 
 	structure = [[] for i in range(X.shape[1])]
 	for local_structure in local_structures:
@@ -2160,7 +2221,7 @@ def discrete_exact_with_constraints(X, weights, key_count, include_edges,
 
 
 def discrete_exact_with_constraints_task(X, weights, key_count, include_edges,
-	exclude_edges, pseudocount, penalty, max_parents, task, n_jobs):
+	exclude_edges, pseudocount, penalty, max_parents, task, low_memory, n_jobs):
 	"""This is a wrapper for the function to be parallelized by joblib.
 
 	This function takes in a single task as an id and a set of parents and
@@ -2211,6 +2272,16 @@ def discrete_exact_with_constraints_task(X, weights, key_count, include_edges,
 			2 - Parents and no self loop
 			3 - Multiple nodes
 
+	low_memory : bool or None, optional
+		Whether to use a low-memory version of the search algorithm. This
+		option only affects algorithm="greedy" and algorithm="exact". 
+		Although the low-memory version of both the greedy and exact
+		algorithms will use less memory, it will also significantly slow
+		down the exact algorithm. However, setting this to True will also
+		significantly speed up the greedy algorithm. Setting this value to
+		None will enable it when algorithm="greedy" and disable it otherwise.
+		Default is None.
+
 	n_jobs : int
 		The number of threads to use when learning the structure of the
 		network. This parallelizes the creation of the parent graphs
@@ -2240,7 +2311,8 @@ def discrete_exact_with_constraints_task(X, weights, key_count, include_edges,
 		local_structure = discrete_exact_a_star(X[:,parents].copy(),
 			weights, key_count[list(parents)], include_edges=include_edges,
 			exclude_edges=exclude_edges, pseudocount=pseudocount,
-			penalty=penalty, max_parents=max_parents, n_jobs=n_jobs)
+			penalty=penalty, max_parents=max_parents, low_memory=low_memory, 
+			n_jobs=n_jobs)
 
 		for i, parent in enumerate(parents):
 			structure[parent] = tuple([parents[k] for k in local_structure[i]])
@@ -2682,7 +2754,7 @@ cdef double discrete_score_node(float* X, double* weights, int* m, int* parents,
 	cdef double count, marginal_count
 	cdef double* counts = <double*> calloc(m[d], sizeof(double))
 	cdef double* marginal_counts = <double*> calloc(m[d-1], sizeof(double))
-	cdef float* row;
+	cdef float* row
 
 	for i in range(n):
 		idx = 0
