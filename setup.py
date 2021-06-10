@@ -16,8 +16,6 @@ else:
 filenames = [ 
     "base",
     "bayes",
-    "MarkovNetwork",
-    "FactorGraph",
     "hmm",
     "gmm",
     "kmeans",

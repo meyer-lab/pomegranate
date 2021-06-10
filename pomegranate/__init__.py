@@ -18,8 +18,6 @@ from .NaiveBayes import NaiveBayes
 from .BayesClassifier import BayesClassifier
 from .MarkovChain import MarkovChain
 from .hmm import HiddenMarkovModel
-from .MarkovNetwork import MarkovNetwork
-from .FactorGraph import FactorGraph
 
 __version__ = '0.14.5'
 
@@ -61,9 +59,5 @@ def from_json(s):
 		return BayesClassifier.from_json(s)
 	elif d['class'] == 'MarkovChain':
 		return MarkovChain.from_json(s)
-	elif d['class'] == 'MarkovNetwork':
-		return MarkovNetwork.from_json(s)
-	elif d['class'] == 'FactorGraph':
-		return FactorGraph.from_json(s)
 	else:
 		raise ValueError("Must pass in an JSON with a valid model name.")
