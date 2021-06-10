@@ -16,7 +16,6 @@ If you get an error involving `pomegranate/base.c`, try installing with `pip ins
 
 * [Probability Distributions](http://pomegranate.readthedocs.io/en/latest/Distributions.html)
 * [General Mixture Models](http://pomegranate.readthedocs.io/en/latest/GeneralMixtureModel.html)
-* [Hidden Markov Models](http://pomegranate.readthedocs.io/en/latest/HiddenMarkovModel.html)
 * [Naive Bayes and Bayes Classifiers](http://pomegranate.readthedocs.io/en/latest/NaiveBayes.html)
 * [Discrete Markov Networks](https://pomegranate.readthedocs.io/en/latest/MarkovNetwork.html)
 
